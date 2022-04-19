@@ -1,173 +1,165 @@
-import { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
-
-import { INotebookTracker, NotebookPanel } from '@jupyterlab/notebook';
-
-import { Token } from '@lumino/coreutils';
-
-import { IETCJupyterLabNotebookStateProvider } from "@educational-technology-collective/etc_jupyterlab_notebook_state_provider";
+import {
+  ILayoutRestorer,
+  JupyterFrontEnd,
+  JupyterFrontEndPlugin
+} from '@jupyterlab/application';
 
 import {
-  NotebookOpenEvent,
-  NotebookSaveEvent,
-  CellExecutionEvent,
-  NotebookScrollEvent,
-  ActiveCellChangeEvent,
-  CellAddEvent,
-  CellRemoveEvent,
-  CellErrorEvent
-} from "./events";
+  ICommandPalette,
+  MainAreaWidget,
+  WidgetTracker
+} from '@jupyterlab/apputils';
 
-import { requestAPI } from "./handler";
+import { Message } from '@lumino/messaging';
 
-import { IConfig } from './types';
+import { Widget } from '@lumino/widgets';
 
-const PLUGIN_ID = '@educational-technology-collective/etc_jupyterlab_telemetry_library:plugin'
-
-export const IETCJupyterLabTelemetryLibraryFactory = new Token<IETCJupyterLabTelemetryLibraryFactory>(PLUGIN_ID);
-
-export interface IETCJupyterLabTelemetryLibraryFactory {
-
-  create(
-    { notebookPanel }:
-      { notebookPanel: NotebookPanel }
-  ): ETCJupyterLabTelemetryLibrary;
+interface APODResponse {
+  copyright: string;
+  date: string;
+  explanation: string;
+  media_type: 'video' | 'image';
+  title: string;
+  url: string;
 }
 
-class ETCJupyterLabTelemetryLibraryFactory implements IETCJupyterLabTelemetryLibraryFactory {
+class APODWidget extends Widget {
+  /**
+   * Construct a new APOD widget.
+   */
+  constructor() {
+    super();
 
-  private _config: IConfig;
+    this.addClass('my-apodWidget');
 
-  constructor({ config }: { config: IConfig }) {
+    // Add an image element to the panel
+    this.img = document.createElement('img');
+    this.node.appendChild(this.img);
 
-    this._config = config;
+    // Add a summary element to the panel
+    this.summary = document.createElement('p');
+    this.node.appendChild(this.summary);
   }
 
-  create({ notebookPanel }: { notebookPanel: NotebookPanel }): ETCJupyterLabTelemetryLibrary {
+  /**
+   * The image element associated with the widget.
+   */
+  readonly img: HTMLImageElement;
 
-    return new ETCJupyterLabTelemetryLibrary({ notebookPanel, config: this._config });
+  /**
+   * The summary text element associated with the widget.
+   */
+  readonly summary: HTMLParagraphElement;
+
+  /**
+   * Handle update requests for the widget.
+   */
+  async onUpdateRequest(msg: Message): Promise<void> {
+    const response = await fetch(
+      `https://api.nasa.gov/planetary/apod?api_key=DEMO_KEY&date=${this.randomDate()}`
+    );
+
+    if (!response.ok) {
+      const data = await response.json();
+      if (data.error) {
+        this.summary.innerText = data.error.message;
+      } else {
+        this.summary.innerText = response.statusText;
+      }
+      return;
+    }
+
+    const data = (await response.json()) as APODResponse;
+
+    if (data.media_type === 'image') {
+      // Populate the image
+      this.img.src = data.url;
+      this.img.title = data.title;
+      this.summary.innerText = data.title;
+      if (data.copyright) {
+        this.summary.innerText += ` (Copyright ${data.copyright})`;
+      }
+    } else {
+      this.summary.innerText = 'Random APOD fetched was not an image.';
+    }
   }
-}
 
-export class ETCJupyterLabTelemetryLibrary {
-
-  public notebookOpenEvent: NotebookOpenEvent;
-  public notebookSaveEvent: NotebookSaveEvent;
-  public cellExecutionEvent: CellExecutionEvent;
-  public cellErrorEvent: CellErrorEvent;
-  public notebookScrollEvent: NotebookScrollEvent;
-  public activeCellChangeEvent: ActiveCellChangeEvent;
-  public cellAddEvent: CellAddEvent;
-  public cellRemoveEvent: CellRemoveEvent;
-
-  constructor({
-    notebookPanel, config
-  }: {
-    notebookPanel: NotebookPanel, config: IConfig
-  }) {
-
-    this.notebookOpenEvent = new NotebookOpenEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.notebookSaveEvent = new NotebookSaveEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.cellExecutionEvent = new CellExecutionEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.cellErrorEvent = new CellErrorEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.notebookScrollEvent = new NotebookScrollEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.activeCellChangeEvent = new ActiveCellChangeEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.cellAddEvent = new CellAddEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
-
-    this.cellRemoveEvent = new CellRemoveEvent({
-      notebookPanel: notebookPanel,
-      config: config
-    });
+  /**
+   * Get a random date string in YYYY-MM-DD format.
+   */
+  randomDate(): string {
+    const start = new Date(2010, 1, 1);
+    const end = new Date();
+    const randomDate = new Date(
+      start.getTime() + Math.random() * (end.getTime() - start.getTime())
+    );
+    return randomDate.toISOString().slice(0, 10);
   }
 }
 
 /**
- * Initialization data for the @educational-technology-collective/etc_jupyterlab_telemetry_extension extension.
+ * Activate the APOD widget extension.
  */
-const plugin: JupyterFrontEndPlugin<IETCJupyterLabTelemetryLibraryFactory> = {
-  id: PLUGIN_ID,
+function activate(
+  app: JupyterFrontEnd,
+  palette: ICommandPalette,
+  restorer: ILayoutRestorer
+) {
+  console.log('JupyterLab extension jupyterlab_apod is activated!');
+
+  // Declare a widget variable
+  let widget: MainAreaWidget<APODWidget>;
+
+  // Add an application command
+  const command: string = 'apod:open';
+  app.commands.addCommand(command, {
+    label: 'Random Astronomy Picture',
+    execute: () => {
+      if (!widget || widget.isDisposed) {
+        // Create a new widget if one does not exist
+        // or if the previous one was disposed after closing the panel
+        const content = new APODWidget();
+        widget = new MainAreaWidget({ content });
+        widget.id = 'apod-jupyterlab';
+        widget.title.label = 'Astronomy Picture';
+        widget.title.closable = true;
+      }
+      if (!tracker.has(widget)) {
+        // Track the state of the widget for later restoration
+        tracker.add(widget);
+      }
+      if (!widget.isAttached) {
+        // Attach the widget to the main work area if it's not there
+        app.shell.add(widget, 'main');
+      }
+      widget.content.update();
+
+      // Activate the widget
+      app.shell.activateById(widget.id);
+    }
+  });
+
+  // Add the command to the palette.
+  palette.addItem({ command, category: 'Tutorial' });
+
+  // Track and restore the widget state
+  let tracker = new WidgetTracker<MainAreaWidget<APODWidget>>({
+    namespace: 'apod'
+  });
+  restorer.restore(tracker, {
+    command,
+    name: () => 'apod'
+  });
+}
+
+/**
+ * Initialization data for the jupyterlab_apod extension.
+ */
+const extension: JupyterFrontEndPlugin<void> = {
+  id: 'jupyterlab_apod',
   autoStart: true,
-  provides: IETCJupyterLabTelemetryLibraryFactory,
-  requires: [INotebookTracker, IETCJupyterLabNotebookStateProvider],
-  activate: async (
-    app: JupyterFrontEnd,
-    notebookTracker: INotebookTracker,
-    etcJupyterLabNotebookStateProvider: IETCJupyterLabNotebookStateProvider
-  ): Promise<IETCJupyterLabTelemetryLibraryFactory> => {
-    console.log(`The JupyterLab plugin ${PLUGIN_ID} is activated!`);
-
-    let config = await requestAPI<IConfig>("config");
-
-    let etcJupyterLabTelemetryLibraryFactory = new ETCJupyterLabTelemetryLibraryFactory({ config });
-
-    // // TEST
-    // class MessageAdapter {
-    //   constructor() { }
-
-    //   log(sender: any, args: any) {
-
-    //     let notebookPanel = args.notebookPanel;
-
-    //     delete args.notebookPanel;
-
-    //     let notebookState = etcJupyterLabNotebookStateProvider.getNotebookState({ notebookPanel: notebookPanel })
-
-    //     let data = {
-    //       ...args, ...notebookState
-    //     }
-
-    //     console.log("etc_jupyterlab_telemetry_extension", data);
-    //   }
-    // }
-
-    // let messageAdapter = new MessageAdapter();
-
-    // notebookTracker.widgetAdded.connect(async (sender: INotebookTracker, notebookPanel: NotebookPanel) => {
-
-    //   etcJupyterLabNotebookStateProvider.addNotebookPanel({ notebookPanel });
-
-    //   let etcJupyterLabTelemetryLibrary = etcJupyterLabTelemetryLibraryFactory.create({ notebookPanel });
-
-    //   etcJupyterLabTelemetryLibrary.notebookOpenEvent.notebookOpened.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.notebookSaveEvent.notebookSaved.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.activeCellChangeEvent.activeCellChanged.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.cellAddEvent.cellAdded.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.cellRemoveEvent.cellRemoved.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.notebookScrollEvent.notebookScrolled.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.cellExecutionEvent.cellExecuted.connect(messageAdapter.log);
-    //   etcJupyterLabTelemetryLibrary.cellErrorEvent.cellErrored.connect(messageAdapter.log);
-    // });
-    // // TEST
-
-    return etcJupyterLabTelemetryLibraryFactory;
-
-  }
+  requires: [ICommandPalette, ILayoutRestorer],
+  activate: activate
 };
 
-export default plugin;
+export default extension;
